@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"log"
+	"time"
 )
 
 type Server struct {
@@ -68,6 +69,32 @@ func (s *Server) BroadcastOk(request maelstrom.Message) error {
 	return nil
 }
 
+func (s *Server) BroadcastMessage(src string, message int) {
+	for _, neighbour := range s.topology[s.node.ID()] {
+		// test without handling err
+		if neighbour == src {
+			continue
+		}
+
+		received := false
+
+		for received == false {
+			s.node.RPC(neighbour, struct {
+				Type    string `json:"type"`
+				Message int    `json:"message"`
+			}{
+				Type:    "broadcast",
+				Message: message,
+			}, func(msg maelstrom.Message) error {
+				received = true
+				return nil
+			})
+
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+}
+
 func (s *Server) Broadcast(request maelstrom.Message) error {
 
 	type Body struct {
@@ -81,6 +108,12 @@ func (s *Server) Broadcast(request maelstrom.Message) error {
 		return nil
 	}
 
+	s.node.Reply(request, struct {
+		Type string `json:"type"`
+	}{
+		Type: "broadcast_ok",
+	})
+
 	// if sent before do nth
 	if s.sentBefore(reqBody.Message) {
 		return nil
@@ -90,27 +123,10 @@ func (s *Server) Broadcast(request maelstrom.Message) error {
 	// make sure we don't sent message more than one and avoid loops
 	// fmt.Printf("node ids are %v", s.node.NodeIDs())
 	// fmt.Printf("node ids are %v", s.topology)
-	for _, neighbour := range s.topology[s.node.ID()] {
-		// test without handling err
-		if neighbour == request.Src {
-			continue
-		}
 
-		s.node.Send(neighbour, struct {
-			Type    string `json:"type"`
-			Message int    `json:"message"`
-		}{
-			Type:    "broadcast",
-			Message: reqBody.Message,
-		})
+	s.BroadcastMessage(request.Src, reqBody.Message)
 
-	}
-
-	return s.node.Reply(request, struct {
-		Type string `json:"type"`
-	}{
-		Type: "broadcast_ok",
-	})
+	return nil
 }
 
 func (s *Server) sentBefore(message int) bool {
